@@ -2,6 +2,8 @@ package net.creativious;
 
 import java.lang.foreign.*;
 import java.lang.invoke.MethodHandle;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 
 public class SharedMemory {
     private final String name;
@@ -23,6 +25,22 @@ public class SharedMemory {
         } catch (Throwable th) {
             throw new RuntimeException(th);
         }
+    }
+
+    public MemorySegment getMemorySegment() {
+        return segment;
+    }
+
+    public ByteBuffer toByteBuffer() {
+        return segment.asByteBuffer().order(ByteOrder.nativeOrder());
+    }
+
+    public int getSize() {
+        return size;
+    }
+
+    public String getName() {
+        return name;
     }
 
     public SharedMemory(String name, int size, boolean is_create) throws Throwable {
