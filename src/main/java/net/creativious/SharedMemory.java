@@ -213,7 +213,6 @@ public class SharedMemory {
             shm_open_linux = linker.downcallHandle(lookup.lookup("shm_open").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.JAVA_INT,
                     ValueLayout.ADDRESS,
-                    ValueLayout.JAVA_INT,
                     ValueLayout.JAVA_INT
             )).withVarargs(true);
             ftruncate_linux = linker.downcallHandle(lookup.lookup("ftruncate").orElseThrow(), FunctionDescriptor.of(
