@@ -2,8 +2,10 @@ package net.creativious;
 
 import java.lang.foreign.*;
 import java.lang.invoke.MethodHandle;
+import java.lang.reflect.Array;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 
 public class SharedMemory {
     private final String name;
@@ -33,6 +35,33 @@ public class SharedMemory {
 
     public ByteBuffer toByteBuffer() {
         return segment.asByteBuffer().order(ByteOrder.nativeOrder());
+    }
+
+    public void write_data(byte[] data) {
+        ByteBuffer buffer = segment.asByteBuffer().order(ByteOrder.nativeOrder());
+        buffer.put(data);
+
+        // If the data size is less than the total size, write zeros to the remaining bytes
+        if (data.length < size) {
+            int remainingBytes = size - data.length;
+            for (int i = 0; i < remainingBytes; i++) {
+                buffer.put((byte) 0);
+            }
+        }
+    }
+
+    public byte[] read_data() {
+        ByteBuffer buffer = segment.asByteBuffer().order(ByteOrder.nativeOrder());
+        byte[] data = new byte[size];
+        buffer.get(data);
+
+        // Trim any empty bits at the end
+        int lastNonZeroIndex = data.length - 1;
+        while (lastNonZeroIndex >= 0 && data[lastNonZeroIndex] == 0) {
+            lastNonZeroIndex--;
+        }
+
+        return Arrays.copyOfRange(data, 0, lastNonZeroIndex + 1);
     }
 
     public int getSize() {
