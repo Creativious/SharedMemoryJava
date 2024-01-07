@@ -2,6 +2,8 @@ package net.creativious;
 
 import java.lang.foreign.*;
 import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.lang.reflect.Array;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -127,9 +129,12 @@ public class SharedMemory {
         else if (SharedMemoryJava.isMacOS() || SharedMemoryJava.isLinux()) {
             int mode = 0x0002;
             if (is_create) mode |= 0x00000200 | 0x00000800;
+            VarHandle varHandle = MethodHandles.arrayElementVarHandle(int[].class);
+            int[] args = new int[]{1};
+            args[0] = mode;
             int fd = (int) shm_open_linux.invokeExact(
                     (Addressable) MemorySession.global().allocateUtf8String(name).address(),
-                    mode,
+                    varHandle.get(args, 0),
                     (int) (S_IRUSR | S_IWUSR)
             );
             if (fd == -1) throw new IllegalStateException("shm_open failed");
@@ -210,11 +215,13 @@ public class SharedMemory {
         else if (SharedMemoryJava.isMacOS() || SharedMemoryJava.isLinux()) {
             Linker linker = Linker.nativeLinker();
             var lookup = linker.defaultLookup();
+            var other_lookup = MethodHandles.lookup();
             shm_open_linux = linker.downcallHandle(lookup.lookup("shm_open").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.JAVA_INT,
                     ValueLayout.ADDRESS,
+                    ValueLayout.JAVA_INT,
                     ValueLayout.JAVA_INT
-            )).withVarargs(true);
+            ));
             ftruncate_linux = linker.downcallHandle(lookup.lookup("ftruncate").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.JAVA_INT,
                     ValueLayout.JAVA_INT,
