@@ -215,7 +215,7 @@ public class SharedMemory {
                     ValueLayout.ADDRESS,
                     ValueLayout.JAVA_INT,
                     ValueLayout.JAVA_INT
-            ));
+            )).withVarargs(true);
             ftruncate_linux = linker.downcallHandle(lookup.lookup("ftruncate").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.JAVA_INT,
                     ValueLayout.JAVA_INT,
