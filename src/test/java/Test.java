@@ -1,13 +1,11 @@
-import net.creativious.SharedMemory;
-import net.creativious.SystemType;
+import net.creativious.SharedMemoryWrapper;
 
 public class Test {
 
     @org.junit.jupiter.api.Test
     public void testExample() {
-        var shm = SharedMemory.create("test", 1024);
-        byte[] data = shm.read_data();
-        String message = new String(data);
+        var shm = SharedMemoryWrapper.create("test", 1024);
+        String message = shm.read_string();
         System.out.println(message);
     }
 }
