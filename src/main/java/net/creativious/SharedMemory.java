@@ -11,6 +11,7 @@ import java.util.Arrays;
 public class SharedMemory {
     private final String name;
     private final int size;
+    private static final short S_IRUSR = 00400, S_IWUSR = 00200;
     private final boolean is_create;
     protected MemorySegment segment;
     private MemorySegment h_map_file;
@@ -131,7 +132,7 @@ public class SharedMemory {
             int fd = (int) shm_open_linux.invokeExact(
                     (Addressable) MemorySession.global().allocateUtf8String(name).address(),
                     mode,
-                    (int) ((short) 00400 | 00200)
+                    (int) (S_IRUSR | S_IWUSR)
             );
             if (fd == -1) throw new IllegalStateException("shm_open failed");
             try {
