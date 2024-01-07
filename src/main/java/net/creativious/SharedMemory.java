@@ -48,15 +48,15 @@ public class SharedMemory {
         this.size = size;
         this.is_create = is_create;
         if (SharedMemoryJava.isWindows()) {
-            if (is_create) {
-                h_map_file = (MemorySegment) createFileMappingWindows.invokeExact(
-                        (MemorySegment) MemoryAddress.ofLong(-1),
-                        (MemorySegment) MemoryAddress.NULL,
+            if (this.is_create) {
+                var temp_address = (MemoryAddress) createFileMappingWindows.invokeExact(
+                        (Addressable) MemorySegment.ofAddress(MemoryAddress.ofLong(-1), 0, MemorySession.global()).address(),
+                        (Addressable) MemorySegment.ofAddress(MemoryAddress.NULL, 0, MemorySession.global()).address(),
                         0x04 | 0x08000000,
                         0,
                         size,
-                        MemorySession.global().allocateUtf8String(name)
-                );
+                        (Addressable) MemorySession.global().allocateUtf8String(name).address());
+                h_map_file = MemorySegment.ofAddress(temp_address.address(), size, MemorySession.global());
             } else {
                 h_map_file = (MemorySegment) openFileMappingWindows.invokeExact(
                         0x0002 | 0x0004,
@@ -66,16 +66,17 @@ public class SharedMemory {
             }
             if (h_map_file.address().toRawLongValue() == 0) throw new IllegalStateException("CreateFileMapping failed");
             try {
-                segment = (MemorySegment) mapViewOfFileWindows.invokeExact(
-                        h_map_file,
+                var address = (MemoryAddress) mapViewOfFileWindows.invokeExact(
+                        (Addressable) h_map_file.address(),
                         0x0002 | 0x0004,
                         0,
                         0,
                         size
                 );
+                segment = MemorySegment.ofAddress(address, size, MemorySession.global());
                 if (segment.address().toRawLongValue() == 0) throw new IllegalStateException("MapViewOfFile failed");
             } catch (Throwable th) {
-                closeHandleWindows.invokeExact(h_map_file);
+                var t = (MemoryAddress) closeHandleWindows.invokeExact();
                 throw th;
             }
             segment = MemorySegment.ofAddress(MemoryAddress.ofLong(segment.address().toRawLongValue()), size, MemorySession.global());
