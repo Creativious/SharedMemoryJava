@@ -126,9 +126,7 @@ public class SharedMemory {
         }
         else if (SharedMemoryJava.isMacOS() || SharedMemoryJava.isLinux()) {
             int mode = 0x0002;
-            if (is_create) {
-                mode |= 0x00000200 | 0x00000800;
-            }
+            if (is_create) mode |= 0x00000200 | 0x00000800;
             int fd = (int) shm_open_linux.invokeExact(
                     (Addressable) MemorySession.global().allocateUtf8String(name).address(),
                     mode,
