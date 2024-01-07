@@ -4,7 +4,7 @@ public class Test {
 
     @org.junit.jupiter.api.Test
     public void testExample() {
-        var shm = SharedMemoryWrapper.create("test", 1024);
+        var shm = SharedMemoryWrapper.open("test", 1024);
         String message = shm.read_string();
         System.out.println(message);
     }
