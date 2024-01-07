@@ -5,6 +5,7 @@ import java.lang.invoke.MethodHandle;
 import java.lang.reflect.Array;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 public class SharedMemory {
@@ -48,6 +49,16 @@ public class SharedMemory {
                 buffer.put((byte) 0);
             }
         }
+    }
+
+    public void write_string(String str) {
+        byte[] data = str.getBytes(StandardCharsets.UTF_8);
+        write_data(data);
+    }
+
+    public String read_string() {
+        byte[] data = read_data();
+        return new String(data, StandardCharsets.UTF_8);
     }
 
     public byte[] read_data() {
