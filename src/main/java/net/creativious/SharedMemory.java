@@ -15,6 +15,7 @@ public class SharedMemory {
     protected MemorySegment segment;
     private MemorySegment h_map_file;
     private static MethodHandle createFileMappingWindows, openFileMappingWindows, closeHandleWindows, mapViewOfFileWindows, unmapViewOfFileWindows;
+    private static MethodHandle shm_open_linux, ftruncate_linux, mmap_linux, munmap_linux, shm_unlink_linux;
     public static SharedMemory create(String name, int size) {
         return init(name, size, true);
     }
@@ -119,14 +120,55 @@ public class SharedMemory {
                 var t = (MemoryAddress) closeHandleWindows.invokeExact();
                 throw th;
             }
-            segment = MemorySegment.ofAddress(MemoryAddress.ofLong(segment.address().toRawLongValue()), size, MemorySession.global());
+            segment = MemorySegment.ofAddress(segment.address(), size, MemorySession.global());
 
+        }
+        else if (SharedMemoryJava.isMacOS() || SharedMemoryJava.isLinux()) {
+            int mode = 0x0002;
+            if (is_create) {
+                mode |= 0x00000200 | 0x00000800;
+            }
+            int fd = (int) shm_open_linux.invokeExact(
+                    (Addressable) MemorySession.global().allocateUtf8String(name).address(),
+                    mode,
+                    (int) ((short) 00400 | 00200)
+            );
+            if (fd == -1) throw new IllegalStateException("shm_open failed");
+            try {
+                if (is_create && (int) ftruncate_linux.invokeExact(fd, size) == -1) throw new IllegalStateException("ftruncate failed");
+                var addr = (MemoryAddress) mmap_linux.invokeExact(
+                        (Addressable) MemorySegment.ofAddress(MemoryAddress.NULL, 0, MemorySession.global()).address(),
+                        size,
+                        0x01 | 0x02,
+                        0x01,
+                        fd,
+                        0
+                );
+                segment = MemorySegment.ofAddress(addr, size, MemorySession.global());
+                if (segment.address().toRawLongValue() == -1) throw new IllegalStateException("mmap failed");
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
+            segment = MemorySegment.ofAddress(segment.address(), size, MemorySession.global());
+        }
+        else {
+            throw new IllegalStateException("Unsupported OS");
         }
     }
     public void close() throws Exception {
         try {
-            if (segment != null) unmapViewOfFileWindows.invokeExact(segment);
-            if (h_map_file != null) closeHandleWindows.invokeExact(h_map_file);
+            if (SharedMemoryJava.isWindows()) {
+                if (segment != null) unmapViewOfFileWindows.invokeExact(segment);
+                if (h_map_file != null) closeHandleWindows.invokeExact(h_map_file);
+            }
+            else if (SharedMemoryJava.isMacOS() || SharedMemoryJava.isLinux()) {
+                if (segment != null) munmap_linux.invokeExact(segment, getSize());
+                if (is_create) shm_unlink_linux.invokeExact((Addressable) MemorySession.global().allocateUtf8String(name).address());
+            }
+            else {
+                throw new IllegalStateException("Unsupported OS");
+            }
         } catch (Throwable throwable) {
             throw new Exception(throwable);
         }
@@ -135,7 +177,7 @@ public class SharedMemory {
     static {
         if (SharedMemoryJava.isWindows()) {
             Linker linker = Linker.nativeLinker();
-            var kernel = SymbolLookup.libraryLookup("kernel32.dll", MemorySession.global());
+            SymbolLookup kernel = SymbolLookup.libraryLookup("kernel32.dll", MemorySession.global());
             createFileMappingWindows = linker.downcallHandle(kernel.lookup("CreateFileMappingA").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.ADDRESS,
                     ValueLayout.ADDRESS,
@@ -165,6 +207,41 @@ public class SharedMemory {
             unmapViewOfFileWindows = linker.downcallHandle(kernel.lookup("UnmapViewOfFile").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.ADDRESS
             ));
+        }
+        else if (SharedMemoryJava.isMacOS() || SharedMemoryJava.isLinux()) {
+            Linker linker = Linker.nativeLinker();
+            var lookup = linker.defaultLookup();
+            shm_open_linux = linker.downcallHandle(lookup.lookup("shm_open").orElseThrow(), FunctionDescriptor.of(
+                    ValueLayout.JAVA_INT,
+                    ValueLayout.ADDRESS,
+                    ValueLayout.JAVA_INT,
+                    ValueLayout.JAVA_INT
+            ));
+            ftruncate_linux = linker.downcallHandle(lookup.lookup("ftruncate").orElseThrow(), FunctionDescriptor.of(
+                    ValueLayout.JAVA_INT,
+                    ValueLayout.JAVA_INT,
+                    ValueLayout.JAVA_INT
+            ));
+            mmap_linux = linker.downcallHandle(lookup.lookup("mmap").orElseThrow(), FunctionDescriptor.of(
+                    ValueLayout.ADDRESS,
+                    ValueLayout.ADDRESS,
+                    ValueLayout.JAVA_INT,
+                    ValueLayout.JAVA_INT,
+                    ValueLayout.JAVA_INT,
+                    ValueLayout.JAVA_INT,
+                    ValueLayout.JAVA_INT
+            ));
+            munmap_linux = linker.downcallHandle(lookup.lookup("munmap").orElseThrow(), FunctionDescriptor.of(
+                    ValueLayout.ADDRESS,
+                    ValueLayout.JAVA_INT
+            ));
+            shm_unlink_linux = linker.downcallHandle(lookup.lookup("shm_unlink").orElseThrow(), FunctionDescriptor.of(
+                    ValueLayout.ADDRESS
+            ));
+
+        }
+        else {
+            throw new IllegalStateException("Unsupported OS");
         }
     }
 }
