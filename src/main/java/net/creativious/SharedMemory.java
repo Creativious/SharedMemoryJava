@@ -129,13 +129,10 @@ public class SharedMemory {
         else if (SharedMemoryJava.isMacOS() || SharedMemoryJava.isLinux()) {
             int mode = 0x0002;
             if (is_create) mode |= 0x00000200 | 0x00000800;
-            VarHandle varHandle = MethodHandles.arrayElementVarHandle(int[].class);
-            int[] args = new int[]{2};
-            args[0] = mode;
-            args[0] = (int) (S_IRUSR | S_IWUSR);
             int fd = (int) shm_open_linux.invokeExact(
                     (Addressable) MemorySession.global().allocateUtf8String(name).address(),
-                    (int) varHandle.get(args, 0)
+                    0x00000200 | 0x0002,
+                    S_IRUSR | S_IWUSR
             );
             if (fd == -1) throw new IllegalStateException("shm_open failed");
             try {
@@ -219,6 +216,7 @@ public class SharedMemory {
             shm_open_linux = linker.downcallHandle(lookup.lookup("shm_open").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.JAVA_INT,
                     ValueLayout.ADDRESS,
+                    ValueLayout.JAVA_INT,
                     ValueLayout.JAVA_INT
             ));
             ftruncate_linux = linker.downcallHandle(lookup.lookup("ftruncate").orElseThrow(), FunctionDescriptor.of(
