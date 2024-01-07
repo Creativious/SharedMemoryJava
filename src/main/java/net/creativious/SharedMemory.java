@@ -13,12 +13,25 @@ import java.util.Arrays;
 public class SharedMemory {
     private final String name;
     private final int size;
+    private static final int O_CREAT = 0x00000200, O_EXCL = 0x00000800, O_RDWR = 0x0002,
+            PROT_READ = 0x01, PROT_WRITE = 0x02, MAP_SHARED = 0x01;
+    @SuppressWarnings("OctalInteger")
     private static final short S_IRUSR = 00400, S_IWUSR = 00200;
     private final boolean is_create;
     protected MemorySegment segment;
     private MemorySegment h_map_file;
     private static MethodHandle createFileMappingWindows, openFileMappingWindows, closeHandleWindows, mapViewOfFileWindows, unmapViewOfFileWindows;
     private static MethodHandle shm_open_linux, ftruncate_linux, mmap_linux, munmap_linux, shm_unlink_linux;
+
+    private static final int SECTION_QUERY = 0x0001, SECTION_MAP_WRITE = 0x0002, SECTION_MAP_READ = 0x0004,
+            SECTION_MAP_EXECUTE = 0x0008, SECTION_EXTEND_SIZE = 0x0010, SECTION_MAP_EXECUTE_EXPLICIT = 0x0020,
+            SECTION_ALL_ACCESS = SECTION_QUERY | SECTION_MAP_WRITE | SECTION_MAP_READ | SECTION_MAP_EXECUTE | SECTION_EXTEND_SIZE | SECTION_MAP_EXECUTE_EXPLICIT;
+    @SuppressWarnings("unused")
+    private static final int PAGE_NOACCESS = 0x01, PAGE_READONLY = 0x02, PAGE_READWRITE = 0x04, PAGE_WRITECOPY = 0x08,
+            PAGE_EXECUTE = 0x10, PAGE_EXECUTE_READ = 0x20, PAGE_EXECUTE_READWRITE = 0x40, PAGE_EXECUTE_WRITECOPY = 0x80,
+            PAGE_GUARD = 0x100, PAGE_NOCACHE = 0x200, PAGE_WRITECOMBINE = 0x400;
+    @SuppressWarnings("unused")
+    private static final int SEC_COMMIT = 0x08000000, SEC_LARGE_PAGES = 0x80000000, FILE_MAP_LARGE_PAGES = 0x20000000;
     public static SharedMemory create(String name, int size) {
         return init(name, size, true);
     }
@@ -93,65 +106,51 @@ public class SharedMemory {
         this.is_create = is_create;
         if (SharedMemoryJava.isWindows()) {
             if (this.is_create) {
-                var temp_address = (MemoryAddress) createFileMappingWindows.invokeExact(
-                        (Addressable) MemorySegment.ofAddress(MemoryAddress.ofLong(-1), 0, MemorySession.global()).address(),
-                        (Addressable) MemorySegment.ofAddress(MemoryAddress.NULL, 0, MemorySession.global()).address(),
-                        0x04 | 0x08000000,
+                h_map_file = (MemorySegment) createFileMappingWindows.invokeExact(
+                        (MemorySegment) MemorySegment.ofAddress(-1),
+                        MemorySegment.NULL,
+                        PAGE_READWRITE | SEC_COMMIT,
                         0,
                         size,
-                        (Addressable) MemorySession.global().allocateUtf8String(name).address());
-                h_map_file = MemorySegment.ofAddress(temp_address.address(), size, MemorySession.global());
+                        (MemorySegment) Arena.ofAuto().allocateUtf8String(name)
+                );
             } else {
                 h_map_file = (MemorySegment) openFileMappingWindows.invokeExact(
-                        0x0002 | 0x0004,
-                        0,
-                        name
+                        SECTION_MAP_WRITE | SECTION_MAP_READ, 0, name
                 );
             }
-            if (h_map_file.address().toRawLongValue() == 0) throw new IllegalStateException("CreateFileMapping failed");
+            if (h_map_file.address() == 0) throw new IllegalStateException("CreateFileMapping failed");
             try {
-                var address = (MemoryAddress) mapViewOfFileWindows.invokeExact(
-                        (Addressable) h_map_file.address(),
-                        0x0002 | 0x0004,
-                        0,
-                        0,
-                        size
-                );
-                segment = MemorySegment.ofAddress(address, size, MemorySession.global());
-                if (segment.address().toRawLongValue() == 0) throw new IllegalStateException("MapViewOfFile failed");
+                segment = (MemorySegment) mapViewOfFileWindows.invokeExact(h_map_file, SECTION_MAP_WRITE | SECTION_MAP_READ, 0, 0, size);
+                if (segment.address() == 0) throw new IllegalStateException("MapViewOfFile failed");
             } catch (Throwable th) {
-                var t = (MemoryAddress) closeHandleWindows.invokeExact();
+                closeHandleWindows.invokeExact(h_map_file);
                 throw th;
             }
-            segment = MemorySegment.ofAddress(segment.address(), size, MemorySession.global());
+            segment = segment.reinterpret(size);
 
         }
         else if (SharedMemoryJava.isMacOS() || SharedMemoryJava.isLinux()) {
-            int mode = 0x0002;
-            if (is_create) mode |= 0x00000200 | 0x00000800;
-            int fd = (int) shm_open_linux.invokeExact(
-                    (Addressable) MemorySession.global().allocateUtf8String(name).address(),
-                    0x00000200 | 0x0002,
-                    S_IRUSR | S_IWUSR
-            );
+            int mode = O_RDWR;
+            if (is_create) mode |= O_CREAT | O_EXCL;
+            int fd = (int) shm_open_linux.invokeExact(Arena.ofAuto().allocateUtf8String(name), mode, (int) (S_IRUSR));
             if (fd == -1) throw new IllegalStateException("shm_open failed");
             try {
-                if (is_create && (int) ftruncate_linux.invokeExact(fd, size) == -1) throw new IllegalStateException("ftruncate failed");
-                var addr = (MemoryAddress) mmap_linux.invokeExact(
-                        (Addressable) MemorySegment.ofAddress(MemoryAddress.NULL, 0, MemorySession.global()).address(),
+                if (is_create && (int) ftruncate_linux.invokeExact(fd, size) == 1) throw new IllegalStateException("ftruncate failed");
+                segment = (MemorySegment) mmap_linux.invokeExact(
+                        MemorySegment.NULL,
                         size,
-                        0x01 | 0x02,
-                        0x01,
+                        PROT_READ | PROT_WRITE,
+                        MAP_SHARED,
                         fd,
                         0
                 );
-                segment = MemorySegment.ofAddress(addr, size, MemorySession.global());
-                if (segment.address().toRawLongValue() == -1) throw new IllegalStateException("mmap failed");
+                if (segment.address() == -1) throw new IllegalStateException("mmap failed");
             } catch (Throwable th) {
                 close();
                 throw th;
             }
-            segment = MemorySegment.ofAddress(segment.address(), size, MemorySession.global());
+            segment = segment.reinterpret(size);
         }
         else {
             throw new IllegalStateException("Unsupported OS");
@@ -165,7 +164,7 @@ public class SharedMemory {
             }
             else if (SharedMemoryJava.isMacOS() || SharedMemoryJava.isLinux()) {
                 if (segment != null) munmap_linux.invokeExact(segment, getSize());
-                if (is_create) shm_unlink_linux.invokeExact((Addressable) MemorySession.global().allocateUtf8String(name).address());
+                if (is_create) shm_unlink_linux.invokeExact(Arena.ofAuto().allocateUtf8String(getName()));
             }
             else {
                 throw new IllegalStateException("Unsupported OS");
@@ -178,8 +177,8 @@ public class SharedMemory {
     static {
         if (SharedMemoryJava.isWindows()) {
             Linker linker = Linker.nativeLinker();
-            SymbolLookup kernel = SymbolLookup.libraryLookup("kernel32.dll", MemorySession.global());
-            createFileMappingWindows = linker.downcallHandle(kernel.lookup("CreateFileMappingA").orElseThrow(), FunctionDescriptor.of(
+            SymbolLookup kernel = SymbolLookup.libraryLookup("kernel32.dll", Arena.global());
+            createFileMappingWindows = linker.downcallHandle(kernel.find("CreateFileMappingA").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.ADDRESS,
                     ValueLayout.ADDRESS,
                     ValueLayout.ADDRESS,
@@ -188,16 +187,16 @@ public class SharedMemory {
                     ValueLayout.JAVA_INT,
                     ValueLayout.ADDRESS
             ));
-            openFileMappingWindows = linker.downcallHandle(kernel.lookup("OpenFileMappingA").orElseThrow(), FunctionDescriptor.of(
+            openFileMappingWindows = linker.downcallHandle(kernel.find("OpenFileMappingA").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.ADDRESS,
                     ValueLayout.JAVA_INT,
                     ValueLayout.JAVA_INT,
                     ValueLayout.ADDRESS
             ));
-            closeHandleWindows = linker.downcallHandle(kernel.lookup("CloseHandle").orElseThrow(), FunctionDescriptor.of(
+            closeHandleWindows = linker.downcallHandle(kernel.find("CloseHandle").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.ADDRESS
             ));
-            mapViewOfFileWindows = linker.downcallHandle(kernel.lookup("MapViewOfFile").orElseThrow(), FunctionDescriptor.of(
+            mapViewOfFileWindows = linker.downcallHandle(kernel.find("MapViewOfFile").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.ADDRESS,
                     ValueLayout.ADDRESS,
                     ValueLayout.JAVA_INT,
@@ -205,26 +204,25 @@ public class SharedMemory {
                     ValueLayout.JAVA_INT,
                     ValueLayout.JAVA_INT
             ));
-            unmapViewOfFileWindows = linker.downcallHandle(kernel.lookup("UnmapViewOfFile").orElseThrow(), FunctionDescriptor.of(
+            unmapViewOfFileWindows = linker.downcallHandle(kernel.find("UnmapViewOfFile").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.ADDRESS
             ));
         }
         else if (SharedMemoryJava.isMacOS() || SharedMemoryJava.isLinux()) {
             Linker linker = Linker.nativeLinker();
             var lookup = linker.defaultLookup();
-            var other_lookup = MethodHandles.lookup();
-            shm_open_linux = linker.downcallHandle(lookup.lookup("shm_open").orElseThrow(), FunctionDescriptor.of(
+            shm_open_linux = linker.downcallHandle(lookup.find("shm_open").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.JAVA_INT,
                     ValueLayout.ADDRESS,
                     ValueLayout.JAVA_INT,
                     ValueLayout.JAVA_INT
-            ));
-            ftruncate_linux = linker.downcallHandle(lookup.lookup("ftruncate").orElseThrow(), FunctionDescriptor.of(
+            ), Linker.Option.firstVariadicArg(2));
+            ftruncate_linux = linker.downcallHandle(lookup.find("ftruncate").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.JAVA_INT,
                     ValueLayout.JAVA_INT,
                     ValueLayout.JAVA_INT
             ));
-            mmap_linux = linker.downcallHandle(lookup.lookup("mmap").orElseThrow(), FunctionDescriptor.of(
+            mmap_linux = linker.downcallHandle(lookup.find("mmap").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.ADDRESS,
                     ValueLayout.ADDRESS,
                     ValueLayout.JAVA_INT,
@@ -233,11 +231,11 @@ public class SharedMemory {
                     ValueLayout.JAVA_INT,
                     ValueLayout.JAVA_INT
             ));
-            munmap_linux = linker.downcallHandle(lookup.lookup("munmap").orElseThrow(), FunctionDescriptor.of(
+            munmap_linux = linker.downcallHandle(lookup.find("munmap").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.ADDRESS,
                     ValueLayout.JAVA_INT
             ));
-            shm_unlink_linux = linker.downcallHandle(lookup.lookup("shm_unlink").orElseThrow(), FunctionDescriptor.of(
+            shm_unlink_linux = linker.downcallHandle(lookup.find("shm_unlink").orElseThrow(), FunctionDescriptor.of(
                     ValueLayout.ADDRESS
             ));
 
