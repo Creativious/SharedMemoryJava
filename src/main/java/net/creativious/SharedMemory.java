@@ -129,7 +129,7 @@ public class SharedMemory {
                 mode |= 0x00000200 | 0x00000800;
             }
             int fd = (int) shm_open_linux.invokeExact(
-                    (Addressable) MemorySession.global().allocateUtf8String(name).address(),
+                    (MemorySegment) MemorySession.global().allocateUtf8String(name),
                     mode,
                     (int) ((short) 00400 | 00200)
             );
