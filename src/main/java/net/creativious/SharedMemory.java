@@ -134,7 +134,7 @@ public class SharedMemory {
             args[0] = mode;
             int fd = (int) shm_open_linux.invokeExact(
                     (Addressable) MemorySession.global().allocateUtf8String(name).address(),
-                    varHandle.get(args, 0),
+                    (int) varHandle.get(args, 0),
                     (int) (S_IRUSR | S_IWUSR)
             );
             if (fd == -1) throw new IllegalStateException("shm_open failed");
